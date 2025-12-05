@@ -40,18 +40,29 @@ def apply_alignment(
     return ref_aligned[:min_len], measured_aligned[:min_len]
 
 
-def compute_transfer_function(ref, measured, fs, nperseg=4096):
-    """
-    Computes the H1 Transfer Function (H = Pxy / Pxx) and Coherence.
-    """
-    # Pxy: Cross Spectral Density
-    f, Pxy = sig.csd(ref, measured, fs=fs, nperseg=nperseg)
-    # Pxx: Power Spectral Density of Source
-    _, Pxx = sig.welch(ref, fs=fs, nperseg=nperseg)
-    # Coherence
-    _, Cxy = sig.coherence(ref, measured, fs=fs, nperseg=nperseg)
+# def compute_transfer_function(ref, measured, fs, nperseg=4096):
+#     """
+#     Computes the H1 Transfer Function (H = Pxy / Pxx) and Coherence.
+#     """
+#     # Pxy: Cross Spectral Density
+#     f, Pxy = sig.csd(ref, measured, fs=fs, nperseg=nperseg)
+#     # Pxx: Power Spectral Density of Source
+#     _, Pxx = sig.welch(ref, fs=fs, nperseg=nperseg)
+#     # Coherence
+#     _, Cxy = sig.coherence(ref, measured, fs=fs, nperseg=nperseg)
+#
+#     # H1 Estimate
+#     H = Pxy / Pxx
+#     return f, H, Cxy
+#
+def compute_transfer_function(ref, measured, fs, nperseg=65536):  # Changed from 4096
+    print(f"Computing Transfer Function (Resolution: {fs / nperseg:.2f} Hz)...")
 
-    # H1 Estimate
+    # Use overlap to reduce variance (noverlap = nperseg // 2 is standard)
+    f, Pxy = sig.csd(ref, measured, fs=fs, nperseg=nperseg, noverlap=nperseg // 2)
+    _, Pxx = sig.welch(ref, fs=fs, nperseg=nperseg, noverlap=nperseg // 2)
+    _, Cxy = sig.coherence(ref, measured, fs=fs, nperseg=nperseg, noverlap=nperseg // 2)
+
     H = Pxy / Pxx
     return f, H, Cxy
 
@@ -204,6 +215,54 @@ def verify_correction(f, H, fir_coeffs, fs):
     return H_corrected
 
 
+def fractional_octave_smoothing(f, mag_db, fraction=12):
+    """
+    Applies fractional octave smoothing (e.g., 1/12th octave) to a dB magnitude curve.
+    Mimics REW smoothing.
+    """
+    # 1. Define the bandwidth for the smoothing window at every frequency
+    # Bandwidth factor for 1/N octave
+    factor = 2 ** (1 / (2 * fraction))
+
+    smoothed = np.zeros_like(mag_db)
+
+    # This loop is slow in pure Python, but easy to understand.
+    # For <100k points it's acceptable (~1-2 seconds).
+    for i in range(len(f)):
+        freq = f[i]
+
+        # Skip DC component
+        if freq == 0:
+            smoothed[i] = mag_db[i]
+            continue
+
+        # Determine the window limits for this specific frequency
+        f_lower = freq / factor
+        f_upper = freq * factor
+
+        # Find indices in the array that fall into this window
+        # We assume 'f' is sorted (standard FFT output)
+        idx_start = np.searchsorted(f, f_lower)
+        idx_end = np.searchsorted(f, f_upper)
+
+        # Ensure we have at least one point
+        if idx_start == idx_end:
+            idx_end += 1
+
+        # Average the POWER, not the dB (standard audio practice)
+        # 1. Convert window slice to linear power
+        slice_db = mag_db[idx_start:idx_end]
+        slice_power = 10 ** (slice_db / 10)
+
+        # 2. Average power
+        avg_power = np.mean(slice_power)
+
+        # 3. Convert back to dB
+        smoothed[i] = 10 * np.log10(avg_power + 1e-12)
+
+    return smoothed
+
+
 def main():
     # --- 1. Load Data ---
     print("Loading audio...")
@@ -226,22 +285,35 @@ def main():
     lag = calculate_lag(ref, measured)
     ref_aligned, measured_aligned = apply_alignment(ref, measured, lag, fine_tune=10)
 
-    # --- 4. System Identification ---
-    f, H, Cxy = compute_transfer_function(ref_aligned, measured_aligned, fs=sr_ref)
+    f, H, Cxy = compute_transfer_function(
+        ref_aligned, measured_aligned, fs=sr_ref, nperseg=65536
+    )  # --- 4. System Identification ---
+    # 2. Calculate Raw Magnitude
+    mag_raw = 20 * np.log10(np.abs(H) + 1e-12)
 
-    # --- 5. Plotting (Separated Figures) ---
-    plot_time_alignment(ref_aligned, measured_aligned, lag)
-    plot_coherence(f, Cxy)
-    plot_bode(f, H)
+    # 3. Apply REW-style Smoothing (e.g., 1/12th Octave)
+    # This cleans up the high freq noise while preserving the bass detail
+    print("Applying 1/12 octave smoothing...")
+    mag_smoothed = fractional_octave_smoothing(f, mag_raw, fraction=12)
 
-    # Show all plots at once
+    # 4. Design Filter (Use the SMOOTHED version for the design)
+    # Note: We reconstruct a "smoothed H" effectively for the design function
+    # Or just modify design_flattening_filter to take the magnitude array directly.
 
+    # For visualization:
+    plt.figure(figsize=(10, 6))
+    plt.semilogx(f, mag_raw, color="lightgray", alpha=0.5, label="Raw (High Res)")
+    plt.semilogx(f, mag_smoothed, color="blue", label="1/12 Oct Smoothed")
+    plt.xlim(20, 24000)
+    plt.grid(which="both")
+    plt.legend()
+    plt.show()
     # --- 6. Design Correction Filter ---
     print("Designing inverse filter...")
     # Taps: Higher = better bass resolution, but more latency.
     # 4095 is decent for 48kHz.
     correction_filter, target_curve = design_flattening_filter(
-        f, H, fs=sr_ref, taps=int(2**12) - 1
+        f, H, fs=sr_ref, taps=int(2**16) - 1
     )
 
     # --- 7. Verify Result ---
