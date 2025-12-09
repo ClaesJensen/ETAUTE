@@ -158,8 +158,10 @@ def apply_filter_to_file(inverse_filter, input_file, output_file):
         filtered_audio = filtered_audio / max_val * 0.99
 
     # 5. Save
+
     sf.write(output_file, filtered_audio, fs)
     print(f"Saved filtered audio to: {output_file}")
+    return filtered_audio
 
 
 # Usage Example:
@@ -208,7 +210,7 @@ def main():
 
     # B. Define the frequency range you want to correct
     # It is dangerous to correct < 40Hz or > 18kHz usually
-    safe_range = [5, 17000]
+    safe_range = [20, 17000]
     # C. Calculate the Inverse Filter (The "Farina" Magic)
     # This function performs the Kirkeby regularization, IFFT, and Windowing automatically.
 
@@ -216,7 +218,7 @@ def main():
         signal=h_pyfar,
         frequency_range=safe_range,
         regu_outside=1.0,  # Don't boost/cut outside the range (0dB)
-        regu_inside=10 ** (-40 / 20),  # -40dB regularization.
+        regu_inside=10 ** (-20 / 20),  # -40dB regularization.
         # A good balance between flat response and low ringing.
         # If you get "pre-echo", increase this (e.g. -30/20).
         normalized=True,  # Maximize volume to 0dBFS
@@ -309,11 +311,13 @@ def main():
     attenuation_dB = -44.0
     gain_linear = 10 ** (attenuation_dB / 20)
     inverse_attenuated = inverse_filter * gain_linear
-    apply_filter_to_file(
+    filtered = apply_filter_to_file(
         inverse_attenuated,
         "./PINK_NOISE_NEW_REFERENCE.wav",
         "./pink_noise_test-out.wav",
     )
+    plt.plot(filtered)
+    plt.show()
 
 
 if __name__ == "__main__":
