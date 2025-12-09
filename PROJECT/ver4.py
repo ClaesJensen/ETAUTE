@@ -416,12 +416,10 @@ def main():
     plt.xlim(t_axis[peak_idx] - 0.005, t_axis[peak_idx] + 0.005)  # +/- 5ms window
     plt.show()
 
-    attenuation_dB = -44.0
-    gain_linear = 10 ** (attenuation_dB / 20)
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
-        "./PINK_NOISE_NEW_REFERENCE.wav",
-        "./pink_noise_test-out.wav",
+        "./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav",
+        "./pink_noise_test-prefiltered.wav",
     )
     # plt.plot(np.fft(filtered))
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
