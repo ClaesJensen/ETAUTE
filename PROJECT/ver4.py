@@ -309,7 +309,11 @@ def main():
     attenuation_dB = -44.0
     gain_linear = 10 ** (attenuation_dB / 20)
     inverse_attenuated = inverse_filter * gain_linear
-    apply_filter_to_file(inverse_attenuated, "./song.wav", "./test-out.wav")
+    apply_filter_to_file(
+        inverse_attenuated,
+        "./PINK_NOISE_NEW_REFERENCE.wav",
+        "./pink_noise_test-out.wav",
+    )
 
 
 if __name__ == "__main__":
