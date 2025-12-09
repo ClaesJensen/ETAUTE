@@ -161,11 +161,116 @@ def apply_filter_to_file(inverse_filter, input_file, output_file):
 
     sf.write(output_file, filtered_audio, fs)
     print(f"Saved filtered audio to: {output_file}")
-    return filtered_audio
+    return (data, filtered_audio, fs)
 
 
-# Usage Example:
-# apply_filter_to_file(inverse_filter, "my_test_song.wav", "my_test_song_corrected.wav")
+def plot_spectrum_comparison(original, filtered, fs):
+    """
+    Plots the frequency spectrum (PSD) of the original vs filtered signal.
+    """
+    print("Computing spectrum...")
+
+    # Ensure signals are the same length for fair comparison (optional but good practice)
+    min_len = min(len(original), len(filtered))
+    original = original[:min_len]
+    filtered = filtered[:min_len]
+
+    # --- Use Welch's Method for a clean "Average Frequency Response" ---
+    # nperseg=4096 gives good low-frequency resolution
+    f_orig, p_orig = sig.welch(original, fs=fs, nperseg=8192)
+    f_filt, p_filt = sig.welch(filtered, fs=fs, nperseg=8192)
+
+    # Convert to dB
+    # We add 1e-12 to avoid log(0) errors
+    db_orig = 10 * np.log10(p_orig + 1e-12)
+    db_filt = 10 * np.log10(p_filt + 1e-12)
+
+    # --- Plotting ---
+    plt.figure(figsize=(12, 6))
+
+    # Plot Original
+    plt.semilogx(f_orig, db_orig, label="Original Signal", alpha=0.6, color="gray")
+
+    # Plot Filtered
+    plt.semilogx(f_filt, db_filt, label="Filtered (Corrected)", alpha=0.9, color="blue")
+
+    plt.title("Spectrum Analysis: Before vs. After Correction")
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Power Spectral Density (dB)")
+    plt.legend()
+    plt.grid(True, which="both", alpha=0.5)
+
+    # Limit view to audible range
+    plt.xlim(20, 20000)
+
+    # Auto-scale Y-axis to focus on the data
+    max_db = max(np.max(db_orig), np.max(db_filt))
+    plt.ylim(max_db - 60, max_db + 5)  # Show top 60dB range
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_raw_fft(original, filtered, fs):
+    """
+    Computes and plots the raw FFT magnitude of the original and filtered signals.
+    """
+    print("Computing raw FFT...")
+
+    # 1. Compute FFT (rfft is faster for real-valued audio)
+    # We use the length of the signal as the FFT size
+    n_orig = len(original)
+    n_filt = len(filtered)
+
+    fft_orig = np.fft.rfft(original)
+    fft_filt = np.fft.rfft(filtered)
+
+    # 2. Get Frequency Axis
+    freqs_orig = np.fft.rfftfreq(n_orig, d=1 / fs)
+    freqs_filt = np.fft.rfftfreq(n_filt, d=1 / fs)
+
+    # 3. Calculate Magnitude in dB
+    # We normalize by the signal length to keep magnitudes comparable
+    mag_orig_db = 20 * np.log10(np.abs(fft_orig) / n_orig + 1e-12)
+    mag_filt_db = 20 * np.log10(np.abs(fft_filt) / n_filt + 1e-12)
+
+    # 4. Plot
+    plt.figure(figsize=(12, 6))
+
+    # Plot Original
+    plt.semilogx(
+        freqs_orig,
+        mag_orig_db,
+        label="Original Signal",
+        alpha=0.5,
+        color="gray",
+        linewidth=0.5,
+    )
+
+    # Plot Filtered
+    plt.semilogx(
+        freqs_filt,
+        mag_filt_db,
+        label="Filtered Signal",
+        alpha=0.8,
+        color="blue",
+        linewidth=0.5,
+    )
+
+    plt.title("Raw FFT Magnitude Spectrum")
+    plt.xlabel("Frequency (Hz)")
+    plt.ylabel("Magnitude (dB)")
+    plt.legend()
+    plt.grid(True, which="both", alpha=0.3)
+    plt.xlim(0, 20000)  # Limit to audible range
+
+    # Set reasonable Y-limits based on the data
+    # (ignoring DC offset at index 0 which can be huge)
+    max_val = np.max(mag_filt_db[1:])
+    plt.ylim(max_val - 80, max_val + 10)
+
+    plt.tight_layout()
+    plt.show()
 
 
 def main():
@@ -218,11 +323,14 @@ def main():
         signal=h_pyfar,
         frequency_range=safe_range,
         regu_outside=1.0,  # Don't boost/cut outside the range (0dB)
-        regu_inside=10 ** (-20 / 20),  # -40dB regularization.
+        regu_inside=10 ** (-30 / 20),  # -40dB regularization.
         # A good balance between flat response and low ringing.
         # If you get "pre-echo", increase this (e.g. -30/20).
         normalized=True,  # Maximize volume to 0dBFS
     )
+    attenuation_dB = -6.0
+    gain_linear = 10 ** (attenuation_dB / 20)
+    inverse_filter = inverse_filter * gain_linear
     # --- 7. Visualize the Inverse Filter ---
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
@@ -310,14 +418,16 @@ def main():
 
     attenuation_dB = -44.0
     gain_linear = 10 ** (attenuation_dB / 20)
-    inverse_attenuated = inverse_filter * gain_linear
-    filtered = apply_filter_to_file(
-        inverse_attenuated,
+    (original, filtered, fs) = apply_filter_to_file(
+        inverse_filter,
         "./PINK_NOISE_NEW_REFERENCE.wav",
         "./pink_noise_test-out.wav",
     )
-    plt.plot(filtered)
+    # plt.plot(np.fft(filtered))
+    plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
+
+    plot_raw_fft(original[:, 0], filtered[:, 0], fs)
 
 
 if __name__ == "__main__":
