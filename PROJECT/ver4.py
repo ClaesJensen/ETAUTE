@@ -10,8 +10,8 @@ def calculate_lag(ref: np.ndarray, measured: np.ndarray) -> int:
     """Calculates the lag between two signals using FFT correlation."""
     print("Calculating correlation...")
     # Mode='full' is required to find the offset
-    corr = sig.correlate(measured, ref, mode="full", method="fft")
-    lags = sig.correlation_lags(len(measured), len(ref), mode="full")
+    corr = sig.correlate(measured, ref, mode="full")
+    lags = sig.correlation_lags(len(measured), len(ref))
     best_lag = lags[np.argmax(corr)]
     print(f"Best Lag: {best_lag} samples")
     return best_lag
@@ -29,16 +29,17 @@ def apply_alignment(
 
     if adjusted_lag > 0:
         measured_aligned = measured[adjusted_lag:]
-        ref_aligned = ref
+        rer = ref
     elif adjusted_lag < 0:
         measured_aligned = measured
-        ref_aligned = ref[abs(adjusted_lag) :]
+        rer = ref[abs(adjusted_lag) :]
     else:
+        print("3")
         measured_aligned = measured
-        ref_aligned = ref
+        rer = ref
 
-    min_len = min(len(measured_aligned), len(ref_aligned))
-    return ref_aligned[:min_len], measured_aligned[:min_len]
+    min_len = min(len(measured_aligned), len(rer))
+    return rer[:min_len], measured_aligned[:min_len]
 
 
 def compute_transfer_function(ref, measured, fs, nperseg=4096):
@@ -120,18 +121,61 @@ def plot_bode(f, H):
     plt.tight_layout()
 
 
+def apply_filter_to_file(inverse_filter, input_file, output_file):
+    print(f"Applying filter to {input_file}...")
+
+    # 1. Load the music/audio you want to correct
+    data, fs = sf.read(input_file)
+
+    # Check Sampling Rate (Must match the filter!)
+    if fs != inverse_filter.sampling_rate:
+        raise ValueError(
+            f"Sampling rate mismatch! Audio: {fs}, Filter: {inverse_filter.sampling_rate}"
+        )
+
+    # 2. Get the filter coefficients (Impulse Response)
+    # inverse_filter.time is shape (1, n_samples), we need 1D array
+    ir = inverse_filter.time[0]
+
+    # 3. Perform Convolution (Filtering)
+    # We use fftconvolve because it is much faster for long IRs
+    # If stereo, we apply to both channels
+    if data.ndim == 2:
+        # Process Left
+        filtered_L = sig.fftconvolve(data[:, 0], ir, mode="same")
+        # Process Right
+        filtered_R = sig.fftconvolve(data[:, 1], ir, mode="same")
+        filtered_audio = np.vstack((filtered_L, filtered_R)).T
+    else:
+        # Mono
+        filtered_audio = sig.fftconvolve(data, ir, mode="same")
+
+    # 4. Normalize to prevent clipping
+    # Filters often boost frequencies, pushing levels above 1.0
+    max_val = np.max(np.abs(filtered_audio))
+    if max_val > 1.0:
+        print(f"Warning: Signal clipped (Max: {max_val:.2f}). Normalizing to -0.1 dB.")
+        filtered_audio = filtered_audio / max_val * 0.99
+
+    # 5. Save
+    sf.write(output_file, filtered_audio, fs)
+    print(f"Saved filtered audio to: {output_file}")
+
+
+# Usage Example:
+# apply_filter_to_file(inverse_filter, "my_test_song.wav", "my_test_song_corrected.wav")
+
+
 def main():
     # --- 1. Load Data ---
-    print("Loading audio...")
-    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
-    measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER mellem.wav")
+    measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
+    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER mellem.wav")
     ref_raw, sr_ref = sf.read("./PINK_NOISE_REFERENCE.wav")
 
     print(sr_ref)
-    assert sr_ref == sr_meas, "Sampling rates do not match!"
+    assert sr_ref == sr_meas
 
     # --- 2. Pre-process (Ensure Mono) ---
-    # Take first channel if stereo
     ref = ref_raw[:, 0] if ref_raw.ndim > 1 else ref_raw
     measured = measured_raw[:, 0] if measured_raw.ndim > 1 else measured_raw
 
@@ -140,15 +184,15 @@ def main():
 
     # --- 3. Compute & Align ---
     lag = calculate_lag(ref, measured)
-    ref_aligned, measured_aligned = apply_alignment(ref, measured, lag, fine_tune=10)
+    measured_aligned = measured[lag : len(ref) + lag]
 
     # --- 4. System Identification ---
     f, H, Cxy = compute_transfer_function(
-        ref_aligned, measured_aligned, fs=sr_ref, nperseg=int(2**14)
+        ref, measured_aligned, fs=sr_ref, nperseg=int(2**14)
     )
 
     # --- 5. Plotting (Separated Figures) ---
-    plot_time_alignment(ref_aligned, measured_aligned, lag)
+    plot_time_alignment(ref, measured_aligned, lag)
     plot_coherence(f, Cxy)
     plot_bode(f, H)
 
@@ -202,8 +246,6 @@ def main():
     ax[1].grid(True, which="both")
 
     plt.tight_layout()
-    plt.show()
-
     plt.show()
 
     simulated_response = h_pyfar * inverse_filter
@@ -263,6 +305,8 @@ def main():
     peak_idx = np.argmax(np.abs(ir_sim))
     plt.xlim(t_axis[peak_idx] - 0.005, t_axis[peak_idx] + 0.005)  # +/- 5ms window
     plt.show()
+
+    apply_filter_to_file(inverse_filter, "./PINK_NOISE_REFERENCE.wav", "./test-out.wav")
 
 
 if __name__ == "__main__":
