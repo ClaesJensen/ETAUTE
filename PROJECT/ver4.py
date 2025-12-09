@@ -306,7 +306,10 @@ def main():
     plt.xlim(t_axis[peak_idx] - 0.005, t_axis[peak_idx] + 0.005)  # +/- 5ms window
     plt.show()
 
-    apply_filter_to_file(inverse_filter, "./PINK_NOISE_REFERENCE.wav", "./test-out.wav")
+    attenuation_dB = -44.0
+    gain_linear = 10 ** (attenuation_dB / 20)
+    inverse_attenuated = inverse_filter * gain_linear
+    apply_filter_to_file(inverse_attenuated, "./song.wav", "./test-out.wav")
 
 
 if __name__ == "__main__":
