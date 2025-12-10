@@ -217,12 +217,12 @@ def plot_spectrum_comparison(original, filtered, fs):
     # --- Use Welch's Method for a clean "Average Frequency Response" ---
     # nperseg=4096 gives good low-frequency resolution
     f_orig, p_orig = sig.welch(original, fs=fs, nperseg=8192)
-    f_filt, p_filt = sig.welch(filtered, fs=fs, nperseg=8192)
+    # f_filt, p_filt = sig.welch(filtered, fs=fs, nperseg=8192)
 
     # Convert to dB
     # We add 1e-12 to avoid log(0) errors
     db_orig = 10 * np.log10(p_orig + 1e-12)
-    db_filt = 10 * np.log10(p_filt + 1e-12)
+    # db_filt = 10 * np.log10(p_filt + 1e-12)
 
     # --- Plotting ---
     plt.figure(figsize=(12, 6))
@@ -231,7 +231,7 @@ def plot_spectrum_comparison(original, filtered, fs):
     plt.semilogx(f_orig, db_orig, label="Original Signal", alpha=0.6, color="gray")
 
     # Plot Filtered
-    plt.semilogx(f_filt, db_filt, label="Filtered (Corrected)", alpha=0.9, color="blue")
+    # plt.semilogx(f_filt, db_filt, label="Filtered (Corrected)", alpha=0.9, color="blue")
 
     plt.title("Spectrum Analysis: Before vs. After Correction")
     plt.xlabel("Frequency (Hz)")
@@ -243,8 +243,8 @@ def plot_spectrum_comparison(original, filtered, fs):
     plt.xlim(20, 20000)
 
     # Auto-scale Y-axis to focus on the data
-    max_db = max(np.max(db_orig), np.max(db_filt))
-    plt.ylim(max_db - 60, max_db + 5)  # Show top 60dB range
+    # max_db = max(np.max(db_orig))
+    # plt.ylim(max_db - 60, max_db + 5)  # Show top 60dB range
 
     plt.tight_layout()
     plt.show()
@@ -325,11 +325,11 @@ def main():
     # measured_raw, sr_meas = sf.read("./20hz22khz_measurement.wav")
     # ref_raw, sr_ref = sf.read("./Pink_20_22000_-12_dBV_48k_Float_LR.wav")
     # Boooom
-    measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
-    ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
+    # measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
+    # ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
     # Verification
-    # measured_raw, sr_meas = sf.read("./lastlastlast_lasse_Det_er_den_her.wav")
-    # ref_raw, sr_ref = sf.read("./lastlast_random_pink_noise_20hzfilter.wav")
+    measured_raw, sr_meas = sf.read("./new/pink_noise_filter_applied_measurement.wav")
+    ref_raw, sr_ref = sf.read("./lastlast_random_pink_noise_20hzfilter.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -355,7 +355,13 @@ def main():
     # --- 3. Compute & Align ---
     lag = calculate_lag(ref, measured)
     # lag = lag - 6000
-    measured_aligned = measured[lag : len(ref) + lag]
+    # measured_aligned = measured[lag : len(ref) + lag]
+
+    # Use your general alignment function
+    ref, measured_aligned = apply_alignment(ref, measured, lag)
+
+    # (Optional) if you want to see the aligned time signals:
+    plot_time_alignment(ref, measured_aligned, lag)
 
     # --- 4. System Identification ---
     f, H, Cxy = compute_transfer_function(
@@ -403,7 +409,7 @@ def main():
 
     # B. Define the frequency range you want to correct
     # It is dangerous to correct < 40Hz or > 18kHz usually
-    safe_range = [0, 21000]
+    safe_range = [60, 21000]
     # C. Calculate the Inverse Filter (The "Farina" Magic)
     # This function performs the Kirkeby regularization, IFFT, and Windowing automatically.
 
@@ -411,7 +417,7 @@ def main():
         signal=h_pyfar,
         frequency_range=safe_range,
         regu_outside=1.0,  # Don't boost/cut outside the range (0dB)
-        regu_inside=10 ** (-60 / 20),  # -40dB regularization.
+        regu_inside=10 ** (-40 / 20),  # -40dB regularization.
         # A good balance between flat response and low ringing.
         # If you get "pre-echo", increase this (e.g. -30/20).
         normalized=True,  # Maximize volume to 0dBFS
