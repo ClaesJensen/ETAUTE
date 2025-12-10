@@ -315,10 +315,18 @@ def plot_raw_fft(original, filtered, fs):
 def main():
     # --- 1. Load Data ---
     # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
-    measured_raw, sr_meas = sf.read("./prefiltered_measurement_not_normalized.wav")
-    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER lav.wav")
     # ref_raw, sr_ref = sf.read("./PINK_NOISE_REFERENCE.wav")
-    ref_raw, sr_ref = sf.read("./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav")
+    #
+    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER lav.wav")
+    #
+    # measured_raw, sr_meas = sf.read("./prefiltered_measurement_not_normalized.wav")
+    # ref_raw, sr_ref = sf.read("./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav")
+    # Bæææm
+    measured_raw, sr_meas = sf.read("./20hz22khz_measurement.wav")
+    ref_raw, sr_ref = sf.read("./Pink_20_22000_-12_dBV_48k_Float_LR.wav")
+    # Boooom
+    measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
+    ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
