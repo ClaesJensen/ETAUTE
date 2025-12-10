@@ -532,8 +532,8 @@ def main():
 
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
-        "./new/Pink_20_24000_-12_dBV_48k_Float_LR.wav",
-        "./new/Pink_20_24000_-12_dBV_48k_Float_LR_filtered.wav",
+        "./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR.wav",
+        "./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR_filtered.wav",
     )
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
