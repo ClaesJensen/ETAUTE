@@ -109,7 +109,7 @@ def plot_time_alignment(ref, measured, lag):
 
     # Create window for zoomed view (center of signal usually good)
     mid_point = len(ref) // 2
-    window = 1000  # 1000 samples zoom
+    window = len(ref)  # 1000 samples zoom
     start = max(0, mid_point - window // 2)
     end = min(len(ref), start + window)
 
@@ -133,7 +133,7 @@ def plot_coherence(f, Cxy):
     ax.set_xlabel("Frequency (Hz)")
     ax.grid(True, which="both")
     ax.set_ylim(0, 1.1)
-    # ax.set_xlim(20, 20000)
+    ax.set_xlim(20, 20000)
     plt.tight_layout()
 
 
@@ -149,7 +149,7 @@ def plot_bode(f, H):
     ax1.set_title("Frequency Response (Magnitude)")
     ax1.set_ylabel("Magnitude (dB)")
     ax1.grid(True, which="both")
-    # ax1.set_xlim(20, 20000)
+    ax1.set_xlim(20, 20000)
 
     # 2. Phase
     ax2.semilogx(f, phase_deg, color="orange")
@@ -322,11 +322,14 @@ def main():
     # measured_raw, sr_meas = sf.read("./prefiltered_measurement_not_normalized.wav")
     # ref_raw, sr_ref = sf.read("./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav")
     # Bæææm
-    measured_raw, sr_meas = sf.read("./20hz22khz_measurement.wav")
-    ref_raw, sr_ref = sf.read("./Pink_20_22000_-12_dBV_48k_Float_LR.wav")
+    # measured_raw, sr_meas = sf.read("./20hz22khz_measurement.wav")
+    # ref_raw, sr_ref = sf.read("./Pink_20_22000_-12_dBV_48k_Float_LR.wav")
     # Boooom
     measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
     ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
+    # Verification
+    # measured_raw, sr_meas = sf.read("./lastlastlast_lasse_Det_er_den_her.wav")
+    # ref_raw, sr_ref = sf.read("./lastlast_random_pink_noise_20hzfilter.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -351,6 +354,7 @@ def main():
     print("RMS ref:", rms(ref), "RMS measured:", rms(measured))
     # --- 3. Compute & Align ---
     lag = calculate_lag(ref, measured)
+    # lag = lag - 6000
     measured_aligned = measured[lag : len(ref) + lag]
 
     # --- 4. System Identification ---
@@ -399,7 +403,7 @@ def main():
 
     # B. Define the frequency range you want to correct
     # It is dangerous to correct < 40Hz or > 18kHz usually
-    safe_range = [0, 24000]
+    safe_range = [0, 21000]
     # C. Calculate the Inverse Filter (The "Farina" Magic)
     # This function performs the Kirkeby regularization, IFFT, and Windowing automatically.
 
@@ -407,11 +411,17 @@ def main():
         signal=h_pyfar,
         frequency_range=safe_range,
         regu_outside=1.0,  # Don't boost/cut outside the range (0dB)
-        regu_inside=10 ** (-30 / 20),  # -40dB regularization.
+        regu_inside=10 ** (-60 / 20),  # -40dB regularization.
         # A good balance between flat response and low ringing.
         # If you get "pre-echo", increase this (e.g. -30/20).
         normalized=True,  # Maximize volume to 0dBFS
     )
+
+    # 2. Normalize to avoid clipping in REW (optional but recommended)
+    # We scale the peak to -1 dBFS so REW reads it clearly
+
+    # 3. Save as a standard WAV file
+
     # 3) Inspect inverse_filter in pyfar freq-domain directly (do NOT rfft the time-domain)
     print("inverse_filter.freq shape:", inverse_filter.freq.shape)
     print(
@@ -425,6 +435,10 @@ def main():
     attenuation_dB = -6.0
     gain_linear = 10 ** (attenuation_dB / 20)
     inverse_filter = inverse_filter * gain_linear
+    ir_data = inverse_filter.time[0]
+    output_filename = "my_inverse_filter_REW2.wav"
+    sf.write(output_filename, ir_data, inverse_filter.sampling_rate)
+    print(f"Exported filter to {output_filename}")
     # --- 7. Visualize the Inverse Filter ---
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
@@ -512,10 +526,9 @@ def main():
 
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
-        "./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav",
-        "./pink_noise_test-prefiltered.wav",
+        "./lastlast_random_pink_noise_20hzfilter.wav",
+        "./filtered_random_pink_best.wav",
     )
-    # plt.plot(np.fft(filtered))
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
 
