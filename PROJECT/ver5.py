@@ -328,8 +328,8 @@ def main():
     # measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
     # ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
     # Verification
-    measured_raw, sr_meas = sf.read("./new/pink_noise_filter_applied_measurement.wav")
-    ref_raw, sr_ref = sf.read("./lastlast_random_pink_noise_20hzfilter.wav")
+    measured_raw, sr_meas = sf.read("./new/unfiltered_measurement_original_noise.wav")
+    ref_raw, sr_ref = sf.read("./new/Pink_20_24000_-12_dBV_48k_Float_LR.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -532,8 +532,8 @@ def main():
 
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
-        "./lastlast_random_pink_noise_20hzfilter.wav",
-        "./new/pink_noise_filter_applied.wav",
+        "./new/Pink_20_24000_-12_dBV_48k_Float_LR.wav",
+        "./new/Pink_20_24000_-12_dBV_48k_Float_LR_filtered.wav",
     )
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
