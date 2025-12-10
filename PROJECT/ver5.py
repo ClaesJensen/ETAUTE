@@ -527,7 +527,7 @@ def main():
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
         "./lastlast_random_pink_noise_20hzfilter.wav",
-        "./filtered_random_pink_best.wav",
+        "./new/pink_noise_filter_applied.wav",
     )
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
