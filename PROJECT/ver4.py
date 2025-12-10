@@ -275,9 +275,10 @@ def plot_raw_fft(original, filtered, fs):
 
 def main():
     # --- 1. Load Data ---
-    measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
-    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER mellem.wav")
-    ref_raw, sr_ref = sf.read("./PINK_NOISE_REFERENCE.wav")
+    measured_raw, sr_meas = sf.read("./PINK_NOISE_REFERENCE.wav")
+    # measured_raw, sr_meas = sf.read("./prefilter_measurement.wav")
+    ref_raw, sr_ref = sf.read("./ETAUTE-MÅLINGER høj.wav")
+    # ref_raw, sr_ref = sf.read("./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -287,17 +288,23 @@ def main():
     measured = measured_raw[:, 0] if measured_raw.ndim > 1 else measured_raw
 
     #  Crop Reference logic (reference is 10 seconds but recording is 8)
-    ref = ref[: 480000 - int(sr_ref * 2)]
-
+    # ref = ref[: 480000 - int(sr_ref * 2)]
     # --- 3. Compute & Align ---
     lag = calculate_lag(ref, measured)
-    measured_aligned = measured[lag : len(ref) + lag]
-
+    ref, measured_aligned = apply_alignment(ref, measured, lag - 50)
+    # measured_aligned = measured[lag : len(ref) + lag]
+    assert len(ref) == len(measured_aligned)
     # --- 4. System Identification ---
     f, H, Cxy = compute_transfer_function(
         ref, measured_aligned, fs=sr_ref, nperseg=int(2**14)
     )
 
+    valid_mid_freqs = np.where((f >= 100) & (f <= 10000))
+    avg_gain = np.mean(np.abs(H[valid_mid_freqs]))
+
+    # Normalize H so it centers exactly on 1.0 (0 dB)
+    # H = H / (avg_gain * 2)
+    print(f"Normalized H by {20 * np.log10(1 / avg_gain):.2f} dB")
     # --- 5. Plotting (Separated Figures) ---
     plot_time_alignment(ref, measured_aligned, lag)
     plot_coherence(f, Cxy)

@@ -6,6 +6,45 @@ from scipy.ndimage import gaussian_filter1d
 import pyfar as pf
 
 
+def check_signal_health(name, audio):
+    """Diagnoses if a signal is compressed, clipped, or healthy."""
+    peak = np.max(np.abs(audio))
+    rms = np.sqrt(np.mean(audio**2))
+    crest_factor = peak / rms
+    crest_factor_db = 20 * np.log10(crest_factor)
+
+    print(f"--- DIAGNOSTIC: {name} ---")
+    print(f"  Peak Amplitude: {peak:.4f}")
+    print(f"  RMS Level:      {rms:.4f}")
+    print(f"  Crest Factor:   {crest_factor:.2f} (raw) | {crest_factor_db:.1f} dB")
+
+    if crest_factor_db < 10:
+        print("  [FAIL] Signal is HEAVILY COMPRESSED or CLIPPED.")
+        print("         Pink noise should have a crest factor > 12 dB.")
+    elif crest_factor_db < 12:
+        print("  [WARNING] Signal shows signs of limiting/compression.")
+    else:
+        print("  [PASS] Signal dynamic range looks healthy.")
+    print("-" * 30)
+
+
+def clean_signal(audio, fs, cutoff=20):
+    """
+    Removes DC offset and low-frequency rumble (<20Hz) to prevent
+    analysis errors and 'fake' clipping.
+    """
+    print(f"Cleaning signal (DC removal + {cutoff}Hz High-pass)...")
+
+    # 1. Remove DC Offset (Center the waveform)
+    audio = audio - np.mean(audio)
+
+    # 2. High-pass filter (Butterworth 4th order) to remove rumble
+    sos = sig.butter(4, cutoff, "hp", fs=fs, output="sos")
+    audio_filtered = sig.sosfilt(sos, audio)
+
+    return audio_filtered
+
+
 def calculate_lag(ref: np.ndarray, measured: np.ndarray) -> int:
     """Calculates the lag between two signals using FFT correlation."""
     print("Calculating correlation...")
@@ -94,7 +133,7 @@ def plot_coherence(f, Cxy):
     ax.set_xlabel("Frequency (Hz)")
     ax.grid(True, which="both")
     ax.set_ylim(0, 1.1)
-    ax.set_xlim(20, 20000)
+    # ax.set_xlim(20, 20000)
     plt.tight_layout()
 
 
@@ -110,7 +149,7 @@ def plot_bode(f, H):
     ax1.set_title("Frequency Response (Magnitude)")
     ax1.set_ylabel("Magnitude (dB)")
     ax1.grid(True, which="both")
-    ax1.set_xlim(20, 20000)
+    # ax1.set_xlim(20, 20000)
 
     # 2. Phase
     ax2.semilogx(f, phase_deg, color="orange")
@@ -275,9 +314,11 @@ def plot_raw_fft(original, filtered, fs):
 
 def main():
     # --- 1. Load Data ---
-    measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
-    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER mellem.wav")
-    ref_raw, sr_ref = sf.read("./PINK_NOISE_REFERENCE.wav")
+    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER høj.wav")
+    measured_raw, sr_meas = sf.read("./prefiltered_measurement_not_normalized.wav")
+    # measured_raw, sr_meas = sf.read("./ETAUTE-MÅLINGER lav.wav")
+    # ref_raw, sr_ref = sf.read("./PINK_NOISE_REFERENCE.wav")
+    ref_raw, sr_ref = sf.read("./PINK_NOISE_NEW_REFERENCE_PREFILTERED.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -285,10 +326,21 @@ def main():
     # --- 2. Pre-process (Ensure Mono) ---
     ref = ref_raw[:, 0] if ref_raw.ndim > 1 else ref_raw
     measured = measured_raw[:, 0] if measured_raw.ndim > 1 else measured_raw
-
+    # --- NEW STEP: Clean Signals (DC Offset & Rumble) ---
+    # measured = clean_signal(measured, sr_meas)
+    # We also clean the reference just to be safe/consistent
+    # ref = clean_signal(ref, sr_ref)
     #  Crop Reference logic (reference is 10 seconds but recording is 8)
-    ref = ref[: 480000 - int(sr_ref * 2)]
+    # ref = ref[: 480000 - int(sr_ref * 2)]
+    check_signal_health("Reference (Source)", ref)
+    check_signal_health("Measured (Mic)", measured)
+    plt.plot(ref)
+    plt.show()
 
+    def rms(x):
+        return np.sqrt(np.mean(x**2))
+
+    print("RMS ref:", rms(ref), "RMS measured:", rms(measured))
     # --- 3. Compute & Align ---
     lag = calculate_lag(ref, measured)
     measured_aligned = measured[lag : len(ref) + lag]
@@ -308,14 +360,38 @@ def main():
     # A. Convert your Scipy data to a Pyfar FrequencyData object
     # pyfar needs to know the complex data and the frequency bins
     n_fft = (len(H) - 1) * 2
+    print(n_fft)
 
     # --- Create the correct pyfar Signal object ---
     # domain='freq' tells pyfar this is FFT data, not raw audio
     h_pyfar = pf.Signal(H, sr_ref, n_samples=n_fft, domain="freq")
 
+    # --- Inspect the pyfar inputs & outputs ---
+    # h_pyfar was created as: pf.Signal(H, sr_ref, n_samples=n_fft, domain="freq")
+
+    # 1) Shape & simple stats of your H (from SciPy)
+    print("H (scipy) length:", len(H))
+    print(
+        "H (scipy) mag dB: min {:.1f}, max {:.1f}, mean {:.1f}".format(
+            20 * np.log10(np.abs(H).min() + 1e-30),
+            20 * np.log10(np.abs(H).max() + 1e-30),
+            20 * np.log10(np.abs(H).mean() + 1e-30),
+        )
+    )
+
+    # 2) pyfar freq-domain data inside the Signal
+    print("h_pyfar.freq shape:", h_pyfar.freq.shape)
+    print(
+        "h_pyfar.freq magnitude dB: min {:.1f}, max {:.1f}, mean {:.1f}".format(
+            20 * np.log10(np.abs(h_pyfar.freq).min() + 1e-30),
+            20 * np.log10(np.abs(h_pyfar.freq).max() + 1e-30),
+            20 * np.log10(np.abs(h_pyfar.freq).mean() + 1e-30),
+        )
+    )
+
     # B. Define the frequency range you want to correct
     # It is dangerous to correct < 40Hz or > 18kHz usually
-    safe_range = [20, 17000]
+    safe_range = [0, 24000]
     # C. Calculate the Inverse Filter (The "Farina" Magic)
     # This function performs the Kirkeby regularization, IFFT, and Windowing automatically.
 
@@ -328,6 +404,16 @@ def main():
         # If you get "pre-echo", increase this (e.g. -30/20).
         normalized=True,  # Maximize volume to 0dBFS
     )
+    # 3) Inspect inverse_filter in pyfar freq-domain directly (do NOT rfft the time-domain)
+    print("inverse_filter.freq shape:", inverse_filter.freq.shape)
+    print(
+        "inverse_filter.freq magnitude dB: min {:.1f}, max {:.1f}, mean {:.1f}".format(
+            20 * np.log10(np.abs(inverse_filter.freq).min() + 1e-30),
+            20 * np.log10(np.abs(inverse_filter.freq).max() + 1e-30),
+            20 * np.log10(np.abs(inverse_filter.freq).mean() + 1e-30),
+        )
+    )
+
     attenuation_dB = -6.0
     gain_linear = 10 ** (attenuation_dB / 20)
     inverse_filter = inverse_filter * gain_linear
