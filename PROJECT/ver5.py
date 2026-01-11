@@ -2,8 +2,15 @@ import numpy as np
 import soundfile as sf
 import scipy.signal as sig
 import matplotlib.pyplot as plt
-from scipy.ndimage import gaussian_filter1d
 import pyfar as pf
+import matplotlib as mpl
+
+# Make PDF the default format for savefig
+mpl.rcParams["savefig.format"] = "pdf"  # default is 'png'
+mpl.rcParams["savefig.bbox"] = "tight"  # optional, trims whitespace
+# Optional: nicer, editable fonts in Illustrator etc.
+mpl.rcParams["pdf.fonttype"] = 42
+mpl.rcParams["ps.fonttype"] = 42
 
 
 def check_signal_health(name, audio):
@@ -97,7 +104,7 @@ def compute_transfer_function(ref, measured, fs, nperseg=4096):
     return f, H, Cxy
 
 
-def plot_time_alignment(ref, measured, lag):
+def plot_time_alignment(ref, measured, lag, fname="plot_time_alignment"):
     """Visualizes the time-domain alignment in its own figure."""
 
     # Normalize for plotting
@@ -124,9 +131,9 @@ def plot_time_alignment(ref, measured, lag):
     plt.tight_layout()
 
 
-def plot_coherence(f, Cxy):
+def plot_coherence(f, Cxy, fname="coherence"):
     """Visualizes the Coherence in its own figure."""
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(10, 5))
     ax.semilogx(f, Cxy, color="green")
     ax.set_title(f"Coherence (Mean: {np.mean(Cxy):.3f})")
     ax.set_ylabel("Coherence (0-1)")
@@ -135,29 +142,54 @@ def plot_coherence(f, Cxy):
     ax.set_ylim(0, 1.1)
     ax.set_xlim(20, 20000)
     plt.tight_layout()
+    plt.savefig("./plots/" + f"{fname}" + ".pdf")
 
 
-def plot_bode(f, H):
-    """Plots Magnitude and Phase in their own figure."""
+def plot_bode(f, H, fs, fname="bodeplot"):
+    """Plots Magnitude and Phase + smoothed magnitude."""
+    # Unsmooth mag / phase
     mag_db = 20 * np.log10(np.abs(H) + 1e-12)
     phase_deg = np.rad2deg(np.unwrap(np.angle(H)))
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10), sharex=True)
+    # ---- pyfar fractional-octave smoothing ----
+    n_fft = 2 * (len(H) - 1)
 
-    # 1. Magnitude
-    ax1.semilogx(f, mag_db, color="blue")
+    # Create pyfar Signal in the frequency domain
+    H_signal = pf.Signal(H, fs, n_samples=n_fft, domain="freq")
+
+    # 1/3-octave smoothing (num_fractions=3)
+    H_smooth, _ = pf.dsp.smooth_fractional_octave(
+        H_signal,
+        num_fractions=3,  # 3 = third-octave
+        mode="magnitude_zerophase",  # only magnitude, zero phase (fine for plotting)
+    )
+
+    # Get magnitude of smoothed response in dB
+    mag_smooth_db = 20 * np.log10(np.abs(H_smooth.freq[0]) + 1e-12)
+
+    # ---- Plot ----
+    fig, ax1 = plt.subplots(1, 1, figsize=(10, 5), sharex=True)
+
+    # Magnitude
+    ax1.semilogx(f, mag_db, color="grey", alpha=0.5, label="raw")
+    ax1.semilogx(
+        f, mag_smooth_db, color="blue", linewidth=1.5, label="1/3-oct smoothed"
+    )
     ax1.set_title("Frequency Response (Magnitude)")
     ax1.set_ylabel("Magnitude (dB)")
     ax1.grid(True, which="both")
     ax1.set_xlim(20, 20000)
+    ax1.legend()
 
-    # 2. Phase
-    ax2.semilogx(f, phase_deg, color="orange")
-    ax2.set_title("Phase Response")
-    ax2.set_ylabel("Phase (deg)")
-    ax2.grid(True, which="both")
+    # Phase
+    # ax2.semilogx(f, phase_deg, color="orange")
+    # ax2.set_title("Phase Response")
+    # ax2.set_ylabel("Phase (deg)")
+    # ax2.set_xlabel("Frequency (Hz)")
+    # ax2.grid(True, which="both")
 
     plt.tight_layout()
+    plt.savefig("./plots/" + f"{fname}" + ".pdf")
 
 
 def apply_filter_to_file(inverse_filter, input_file, output_file):
@@ -173,12 +205,9 @@ def apply_filter_to_file(inverse_filter, input_file, output_file):
         )
 
     # 2. Get the filter coefficients (Impulse Response)
-    # inverse_filter.time is shape (1, n_samples), we need 1D array
     ir = inverse_filter.time[0]
 
     # 3. Perform Convolution (Filtering)
-    # We use fftconvolve because it is much faster for long IRs
-    # If stereo, we apply to both channels
     if data.ndim == 2:
         # Process Left
         filtered_L = sig.fftconvolve(data[:, 0], ir, mode="same")
@@ -190,7 +219,6 @@ def apply_filter_to_file(inverse_filter, input_file, output_file):
         filtered_audio = sig.fftconvolve(data, ir, mode="same")
 
     # 4. Normalize to prevent clipping
-    # Filters often boost frequencies, pushing levels above 1.0
     max_val = np.max(np.abs(filtered_audio))
     if max_val > 1.0:
         print(f"Warning: Signal clipped (Max: {max_val:.2f}). Normalizing to -0.1 dB.")
@@ -203,26 +231,25 @@ def apply_filter_to_file(inverse_filter, input_file, output_file):
     return (data, filtered_audio, fs)
 
 
-def plot_spectrum_comparison(original, filtered, fs):
+def plot_spectrum_comparison(original, filtered, fs, fname="spectrum_comp"):
     """
     Plots the frequency spectrum (PSD) of the original vs filtered signal.
     """
     print("Computing spectrum...")
 
-    # Ensure signals are the same length for fair comparison (optional but good practice)
+    # Ensure signals are the same length
     min_len = min(len(original), len(filtered))
     original = original[:min_len]
     filtered = filtered[:min_len]
 
-    # --- Use Welch's Method for a clean "Average Frequency Response" ---
-    # nperseg=4096 gives good low-frequency resolution
+    # --- Use Welch's  ---
     f_orig, p_orig = sig.welch(original, fs=fs, nperseg=8192)
-    # f_filt, p_filt = sig.welch(filtered, fs=fs, nperseg=8192)
+    f_filt, p_filt = sig.welch(filtered, fs=fs, nperseg=8192)
 
     # Convert to dB
     # We add 1e-12 to avoid log(0) errors
     db_orig = 10 * np.log10(p_orig + 1e-12)
-    # db_filt = 10 * np.log10(p_filt + 1e-12)
+    db_filt = 10 * np.log10(p_filt + 1e-12)
 
     # --- Plotting ---
     plt.figure(figsize=(12, 6))
@@ -231,7 +258,7 @@ def plot_spectrum_comparison(original, filtered, fs):
     plt.semilogx(f_orig, db_orig, label="Original Signal", alpha=0.6, color="gray")
 
     # Plot Filtered
-    # plt.semilogx(f_filt, db_filt, label="Filtered (Corrected)", alpha=0.9, color="blue")
+    plt.semilogx(f_filt, db_filt, label="Filtered (Corrected)", alpha=0.9, color="blue")
 
     plt.title("Spectrum Analysis: Before vs. After Correction")
     plt.xlabel("Frequency (Hz)")
@@ -247,17 +274,16 @@ def plot_spectrum_comparison(original, filtered, fs):
     # plt.ylim(max_db - 60, max_db + 5)  # Show top 60dB range
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("./plots/" + f"{fname}" + ".pdf")
 
 
-def plot_raw_fft(original, filtered, fs):
+def plot_raw_fft(original, filtered, fs, fname="raw_fft"):
     """
     Computes and plots the raw FFT magnitude of the original and filtered signals.
     """
     print("Computing raw FFT...")
 
     # 1. Compute FFT (rfft is faster for real-valued audio)
-    # We use the length of the signal as the FFT size
     n_orig = len(original)
     n_filt = len(filtered)
 
@@ -309,7 +335,7 @@ def plot_raw_fft(original, filtered, fs):
     plt.ylim(max_val - 80, max_val + 10)
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("./plots/" + f"{fname}" + ".pdf")
 
 
 def main():
@@ -325,11 +351,11 @@ def main():
     # measured_raw, sr_meas = sf.read("./20hz22khz_measurement.wav")
     # ref_raw, sr_ref = sf.read("./Pink_20_22000_-12_dBV_48k_Float_LR.wav")
     # Boooom
-    # measured_raw, sr_meas = sf.read("./hopefully_last_fl_measurement.wav")
-    # ref_raw, sr_ref = sf.read("./hopefully_last_pink_noise.wav")
-    # Verification
     measured_raw, sr_meas = sf.read("./new/unfiltered_measurement_original_noise.wav")
     ref_raw, sr_ref = sf.read("./new/Pink_20_24000_-12_dBV_48k_Float_LR.wav")
+    # Verification
+    # measured_raw, sr_meas = sf.read("./new/new_filtered_measurement.wav")
+    # ref_raw, sr_ref = sf.read("./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR.wav")
 
     print(sr_ref)
     assert sr_ref == sr_meas
@@ -337,16 +363,8 @@ def main():
     # --- 2. Pre-process (Ensure Mono) ---
     ref = ref_raw[:, 0] if ref_raw.ndim > 1 else ref_raw
     measured = measured_raw[:, 0] if measured_raw.ndim > 1 else measured_raw
-    # --- NEW STEP: Clean Signals (DC Offset & Rumble) ---
-    # measured = clean_signal(measured, sr_meas)
-    # We also clean the reference just to be safe/consistent
-    # ref = clean_signal(ref, sr_ref)
     #  Crop Reference logic (reference is 10 seconds but recording is 8)
     # ref = ref[: 480000 - int(sr_ref * 2)]
-    check_signal_health("Reference (Source)", ref)
-    check_signal_health("Measured (Mic)", measured)
-    plt.plot(ref)
-    plt.show()
 
     def rms(x):
         return np.sqrt(np.mean(x**2))
@@ -371,17 +389,12 @@ def main():
     # --- 5. Plotting (Separated Figures) ---
     plot_time_alignment(ref, measured_aligned, lag)
     plot_coherence(f, Cxy)
-    plot_bode(f, H)
+    plot_bode(f, H, sr_ref)
 
-    # Show all plots at once
-
-    # A. Convert your Scipy data to a Pyfar FrequencyData object
-    # pyfar needs to know the complex data and the frequency bins
     n_fft = (len(H) - 1) * 2
     print(n_fft)
 
     # --- Create the correct pyfar Signal object ---
-    # domain='freq' tells pyfar this is FFT data, not raw audio
     h_pyfar = pf.Signal(H, sr_ref, n_samples=n_fft, domain="freq")
 
     # --- Inspect the pyfar inputs & outputs ---
@@ -407,26 +420,16 @@ def main():
         )
     )
 
-    # B. Define the frequency range you want to correct
-    # It is dangerous to correct < 40Hz or > 18kHz usually
-    safe_range = [60, 21000]
-    # C. Calculate the Inverse Filter (The "Farina" Magic)
+    safe_range = [85, 21000]
     # This function performs the Kirkeby regularization, IFFT, and Windowing automatically.
 
     inverse_filter = pf.dsp.regularized_spectrum_inversion(
         signal=h_pyfar,
         frequency_range=safe_range,
         regu_outside=1.0,  # Don't boost/cut outside the range (0dB)
-        regu_inside=10 ** (-40 / 20),  # -40dB regularization.
-        # A good balance between flat response and low ringing.
-        # If you get "pre-echo", increase this (e.g. -30/20).
+        regu_inside=10 ** (-10 / 20),  # -40dB regularization.
         normalized=True,  # Maximize volume to 0dBFS
     )
-
-    # 2. Normalize to avoid clipping in REW (optional but recommended)
-    # We scale the peak to -1 dBFS so REW reads it clearly
-
-    # 3. Save as a standard WAV file
 
     # 3) Inspect inverse_filter in pyfar freq-domain directly (do NOT rfft the time-domain)
     print("inverse_filter.freq shape:", inverse_filter.freq.shape)
@@ -448,15 +451,12 @@ def main():
     # --- 7. Visualize the Inverse Filter ---
     fig, ax = plt.subplots(2, 1, figsize=(10, 8))
 
-    # Time Domain (Impulse Response of the Filter)
-    # We plot the result to ensure the peak is centered (it should be)
     ax[0].plot(inverse_filter.times, inverse_filter.time[0])
     ax[0].set_title("Inverse Filter Impulse Response (Correction Filter)")
     ax[0].set_xlabel("Time (s)")
     ax[0].grid(True)
 
     # Frequency Domain (The Filter's EQ Curve)
-    # We plot the magnitude to see the "Inverse" EQ curve
     freqs_inv = np.fft.rfftfreq(
         inverse_filter.n_samples, d=1 / inverse_filter.sampling_rate
     )
@@ -470,16 +470,12 @@ def main():
     ax[1].grid(True, which="both")
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("./plots/inverse_filter_freq_response.pdf")
 
     simulated_response = h_pyfar * inverse_filter
 
     # --- 10. Visual Comparison ---
     fig, ax = plt.subplots(figsize=(10, 6))
-
-    # A. Plot Original Response (Magnitude)
-    # We use pyfar's plotting utilities or manual matplotlib.
-    # Let's stick to matplotlib to keep it consistent with your previous code.
 
     # Get frequency axes
     f_axis = simulated_response.frequencies
@@ -510,7 +506,7 @@ def main():
     ax.legend()
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig("./plots/simulated_response.pdf")
 
     # Plot Impulse Response of the Simulation
     plt.figure(figsize=(10, 5))
@@ -528,17 +524,18 @@ def main():
     # Zoom in very close to the main spike
     peak_idx = np.argmax(np.abs(ir_sim))
     plt.xlim(t_axis[peak_idx] - 0.005, t_axis[peak_idx] + 0.005)  # +/- 5ms window
-    plt.show()
+    plt.savefig("./plots/" + "simulated_ir" + ".pdf")
 
     (original, filtered, fs) = apply_filter_to_file(
         inverse_filter,
         "./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR.wav",
-        "./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR_filtered.wav",
+        "./new/NEW_Pink_20_24000_-12_dBV_48k_Float_LR_filtered_85_21k_-20.wav",
     )
     plot_spectrum_comparison(original[:, 0], filtered[:, 0], fs)
     plt.show()
-
-    plot_raw_fft(original[:, 0], filtered[:, 0], fs)
+    #
+    # plot_raw_fft(original[:, 0], filtered[:, 0], fs)
+    #
 
 
 if __name__ == "__main__":
